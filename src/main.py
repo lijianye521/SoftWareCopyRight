@@ -13,7 +13,7 @@ class CodeToWordApp:
     def __init__(self, root):
         self.root = root
         self.root.title("软件著作权源代码文档生成器")
-        self.root.geometry("800x750")  # 增大窗口尺寸以容纳新字段
+        self.root.geometry("800x850")  # 增大窗口尺寸以容纳新字段
         
         # 设置应用主题和样式
         self.style = ttk.Style()
@@ -84,9 +84,26 @@ class CodeToWordApp:
         lines_per_page_entry = ttk.Entry(main_frame, textvariable=self.lines_per_page_var, width=50, font=('微软雅黑', 12))
         lines_per_page_entry.grid(row=8, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
         
+        # 生成模式
+        ttk.Label(main_frame, text="生成模式:").grid(row=9, column=0, sticky=tk.W, pady=15)
+        self.mode_var = tk.StringVar(value="默认模式")
+        mode_selector = ttk.Combobox(main_frame, textvariable=self.mode_var, values=["默认模式", "标准模式"], state="readonly", width=47, font=('微软雅黑', 12))
+        mode_selector.grid(row=9, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        
+        # 模式说明
+        standard_mode_info = ttk.Label(
+            main_frame, 
+            text="标准模式：用于软件著作权申请，将生成源代码文件的前30页和后30页。\n要求总代码量超过60页，否则将按默认模式生成。", 
+            font=('微软雅黑', 10),
+            wraplength=450, 
+            justify=tk.LEFT,
+            background="#f0f0f0"
+        )
+        standard_mode_info.grid(row=10, column=1, sticky=tk.W, pady=5, padx=5)
+        
         # 生成按钮
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=9, column=0, columnspan=3, pady=30)
+        button_frame.grid(row=11, column=0, columnspan=3, pady=30)
         
         self.style.configure('Generate.TButton', font=('微软雅黑', 14, 'bold'))
         generate_btn = ttk.Button(
@@ -100,7 +117,7 @@ class CodeToWordApp:
         
         # 作者信息
         author_label = ttk.Label(main_frame, text="作者: lijianye", font=('微软雅黑', 10))
-        author_label.grid(row=10, column=0, columnspan=3, sticky=tk.E, pady=10)
+        author_label.grid(row=12, column=0, columnspan=3, sticky=tk.E, pady=10)
         
         # 状态变量（不显示状态框）
         self.status_var = tk.StringVar()
@@ -198,6 +215,8 @@ class CodeToWordApp:
         app_name_font = self.app_name_font_var.get() or "微软雅黑"
         version_font = self.version_font_var.get() or "微软雅黑"
         
+        mode = self.mode_var.get()
+        
         # 获取并验证每页行数
         try:
             lines_per_page = int(self.lines_per_page_var.get())
@@ -208,17 +227,59 @@ class CodeToWordApp:
             return
             
         # 根据每页行数计算适当的字体大小（简单算法，可能需要调整）
-        # A4纸高度约为29.7厘米，减去上下边距3厘米，剩余26.7厘米
-        # 计算每行高度，然后确定字体大小
         line_height_cm = 26.7 / lines_per_page
-        font_size = int(line_height_cm * 28)  # 简单换算，可根据实际效果调整
-        font_size = max(8, min(12, font_size))  # 限制字体大小在8-12之间
+        font_size = int(line_height_cm * 28)
+        font_size = max(8, min(12, font_size))
         
         try:
-            # 创建Word文档
-            doc = Document()
+            # --- Stage 1: Collect all lines from all files ---
+            all_styled_lines = []
             base_path = pathlib.Path(path)
+            lines_by_ext = {}
             
+            for extension in extensions:
+                extension = extension.strip('.')
+                lines_by_ext[f".{extension}"] = 0
+                for file_path in base_path.rglob(f"*.{extension}"):
+                    relative_path = str(file_path.relative_to(base_path))
+                    all_styled_lines.append((relative_path, 'path'))
+                    
+                    try:
+                        encoding = self.detect_encoding(file_path)
+                        lines = self.read_file_lines(file_path, encoding)
+                        lines_by_ext[f".{extension}"] += len(lines)
+                        for line in lines:
+                            all_styled_lines.append((line, 'code'))
+                    except Exception as e:
+                        all_styled_lines.append((f"无法读取文件: {relative_path} ({e})", 'error'))
+
+            file_count = len([1 for text, style in all_styled_lines if style == 'path'])
+
+            # --- Stage 2: Decide which lines to print based on mode ---
+            lines_to_print = []
+            total_lines = len(all_styled_lines)
+            total_pages = total_lines / lines_per_page
+            
+            final_mode = mode
+            if mode == "标准模式":
+                if total_pages <= 60:
+                    messagebox.showwarning("模式切换", f"总代码约 {total_pages:.1f} 页，不足60页，无法按标准模式生成。\n将自动切换到默认模式。")
+                    final_mode = "默认模式"
+                else:
+                    lines_for_30_pages = int(30 * lines_per_page)
+                    first_30 = all_styled_lines[:lines_for_30_pages]
+                    last_30 = all_styled_lines[-lines_for_30_pages:]
+                    separator_text = f"... (中间部分代码省略) ..."
+                    
+                    lines_to_print.extend(first_30)
+                    lines_to_print.append((separator_text, 'separator'))
+                    lines_to_print.extend(last_30)
+            
+            if final_mode == "默认模式":
+                lines_to_print = all_styled_lines
+
+            # --- Stage 3: Generate the document from the prepared line list ---
+            doc = Document()
             # 设置文档页面大小和边距
             for section in doc.sections:
                 section.page_height = Cm(29.7)  # A4高度
@@ -236,71 +297,38 @@ class CodeToWordApp:
             style = doc.styles['Normal']
             style.font.name = font_name
             style.font.size = Pt(font_size)
-            # 显式设置默认的东亚字体
             rpr = style.element.rPr
             rpr.rFonts.set(qn('w:eastAsia'), font_name)
-            
             style.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
             style.paragraph_format.line_spacing = Pt(font_size * 1.05)
             style.paragraph_format.space_before = Pt(0)
             style.paragraph_format.space_after = Pt(0)
             
-            # 添加页眉
             self.add_header(doc, app_name, version, app_name_font, version_font)
             
-            file_count = 0
-            
-            # 遍历目录
-            for extension in extensions:
-                extension = extension.strip('.')
-                for file_path in base_path.rglob(f"*.{extension}"):
-                    file_count += 1
-                    
-                    # 获取相对路径
-                    relative_path = file_path.relative_to(base_path)
-                    
-                    # 添加文件路径（不带"文件路径:"前缀）
+            for text, style_type in lines_to_print:
+                if style_type == 'path':
                     path_para = doc.add_paragraph()
-                    path_run = path_para.add_run(f"{relative_path}")
+                    path_run = path_para.add_run(text)
                     path_run.bold = True
                     path_run.font.name = font_name
-                    path_run.font.size = Pt(font_size + 1)  # 路径字体稍大
-                    # 显式设置东亚字体
+                    path_run.font.size = Pt(font_size + 1)
                     r_path = path_run._element
                     r_path.rPr.rFonts.set(qn('w:eastAsia'), font_name)
-                    
                     path_para.paragraph_format.space_before = Pt(0)
                     path_para.paragraph_format.space_after = Pt(0)
                     path_para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-                    path_para.paragraph_format.line_spacing = Pt((font_size + 1) * 1.1)  # 减小行距
-                    
-                    # 读取并添加文件内容
-                    try:
-                        # 自动检测文件编码
-                        encoding = self.detect_encoding(file_path)
-                        lines = self.read_file_lines(file_path, encoding)
-                        for line in lines:
-                            content_para = doc.add_paragraph(line)
-                            self.apply_style_to_paragraph(content_para, font_name, font_size)
-                    except UnicodeDecodeError:
-                        # 如果自动检测失败，尝试常见的中文编码
-                        for enc in ['gbk', 'gb2312', 'gb18030', 'utf-8', 'latin1']:
-                            try:
-                                lines = self.read_file_lines(file_path, enc)
-                                for line in lines:
-                                    content_para = doc.add_paragraph(line)
-                                    self.apply_style_to_paragraph(content_para, font_name, font_size)
-                                break
-                            except UnicodeDecodeError:
-                                continue
-                        else:
-                            error_para = doc.add_paragraph(f"无法读取文件内容: 编码问题")
-                            self.apply_style_to_paragraph(error_para, font_name, font_size)
-                    except Exception as e:
-                        error_para = doc.add_paragraph(f"无法读取文件内容: {str(e)}")
-                        self.apply_style_to_paragraph(error_para, font_name, font_size)
-                    
-            # 保存文档
+                    path_para.paragraph_format.line_spacing = Pt((font_size + 1) * 1.1)
+                elif style_type == 'code' or style_type == 'error':
+                    content_para = doc.add_paragraph(text)
+                    self.apply_style_to_paragraph(content_para, font_name, font_size)
+                elif style_type == 'separator':
+                    sep_para = doc.add_paragraph()
+                    sep_para.add_run(text).italic = True
+                    sep_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                    self.apply_style_to_paragraph(sep_para, font_name, font_size)
+
+            # --- Stage 4: Save and open ---
             save_path = filedialog.asksaveasfilename(
                 defaultextension=".docx",
                 filetypes=[("Word documents", "*.docx")],
@@ -309,13 +337,28 @@ class CodeToWordApp:
             
             if save_path:
                 doc.save(save_path)
+                
+                total_code_lines = sum(lines_by_ext.values())
+                
+                # 构建详细的成功信息
+                stats_details = "\n\n代码行数统计:\n"
+                for ext, count in lines_by_ext.items():
+                    stats_details += f"  - {ext} 文件: {count} 行\n"
+                stats_details += f"总代码行数: {total_code_lines} 行"
+
+                success_message = f"文档已生成完成！\n共处理 {file_count} 个文件。"
+                if final_mode == "标准模式":
+                    success_message += "\n模式：标准模式 (前30页 + 后30页)"
+                else:
+                    success_message += f"\n模式：默认模式 (共 {total_pages:.1f} 页)"
+                
+                success_message += stats_details
+
+                messagebox.showinfo("成功", success_message)
                 try:
                     os.startfile(save_path)
                 except Exception as e:
                     messagebox.showwarning("提示", f"无法自动打开文件：{e}")
-                messagebox.showinfo("成功", f"文档已生成完成！\n共处理 {file_count} 个文件。\n已设置为每页约 {lines_per_page} 行。")
-            else:
-                self.status_var.set("已取消保存文档。")
             
         except Exception as e:
             messagebox.showerror("错误", f"生成文档时发生错误：{str(e)}")
