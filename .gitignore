@@ -1,6 +1,5 @@
 # 构建输出目录
 build/
-dist/
 __pycache__/
 
 # 编译的Python文件
@@ -15,7 +14,7 @@ __pycache__/
 *.toc
 *.manifest
 *.spec
-
+dist/
 # 安装日志
 pip-log.txt
 pip-delete-this-directory.txt

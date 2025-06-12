@@ -1,1 +1,6 @@
-python-docx==0.8.11 
+python-docx>=0.8.11
+pillow>=9.0.0
+chardet>=4.0.0
+pathspec>=0.9.0
+sv-ttk>=2.5.0
+pyinstaller>=5.6.0 
