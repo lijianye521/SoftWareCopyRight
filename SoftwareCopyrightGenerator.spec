@@ -5,11 +5,11 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=['docx', 'chardet', 'pathspec', 'sv_ttk'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['matplotlib', 'numpy', 'pandas', 'scipy', 'PIL.ImageQt', 'PyQt5'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

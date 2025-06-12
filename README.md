@@ -1,6 +1,6 @@
 # 软件著作权源代码生成器 (Software Copyright Code Generator)
 
-<div align="center">
+<div align="left">
 
 ![GitHub stars](https://img.shields.io/github/stars/lijianye521/SoftWareCopyRight?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/lijianye521/SoftWareCopyRight?style=social)
