@@ -1,94 +1,228 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, font
+from tkinter import ttk, filedialog, messagebox, font, Toplevel, scrolledtext
 from docx import Document
 from docx.shared import RGBColor, Pt, Inches, Cm
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT, WD_LINE_SPACING
-from docx.enum.section import WD_SECTION
+from docx.enum.section import WD_SECTION, WD_ORIENTATION
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from docx.oxml.shared import qn as shared_qn
 import os
 import pathlib
 import chardet
+import pathspec
+import json
+import configparser
 
 class CodeToWordApp:
     def __init__(self, root):
         self.root = root
         self.root.title("软件著作权源代码文档生成器")
-        self.root.geometry("800x850")  # 增大窗口尺寸以容纳新字段
+        self.root.geometry("800x950") # 再次增大窗口以适应新字段
         
         # 设置应用主题和样式
         self.style = ttk.Style()
         self.style.configure('TLabel', font=('微软雅黑', 12))
         self.style.configure('TEntry', font=('微软雅黑', 12))
         self.style.configure('TButton', font=('微软雅黑', 12))
+        self.style.configure('Small.TButton', font=('微软雅黑', 9))
+        self.style.configure('Add.TButton', font=('微软雅黑', 12, 'bold'))
         
         # 设置背景颜色
         self.root.configure(bg="#f0f0f0")
         
-        # 创建主框架
-        main_frame = ttk.Frame(root, padding="20")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # 预定义文件类型模式
+        self.file_type_modes = {
+            "前端模式": ["json", "js", "jsx", "ts", "tsx", "html", "css", "scss", "vue"],
+            "后端模式": ["java", "xml", "py", "php", "cs", "go", "rb"],
+            "混合模式": ["json", "js", "jsx", "ts", "tsx", "html", "css", "scss", "vue", "java", "xml", "py", "php"]
+        }
+        
+        # 加载用户自定义模式
+        self.config = configparser.ConfigParser()
+        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+        self.load_config()
+        
+        # 项目路径列表
+        self.project_paths = []
+        
+        # 创建主框架，使用滚动条
+        outer_frame = ttk.Frame(root)
+        outer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        outer_frame.columnconfigure(0, weight=1)
+        outer_frame.rowconfigure(0, weight=1)
+        
+        # 创建Canvas和滚动条
+        canvas = tk.Canvas(outer_frame, bg="#f0f0f0")
+        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 主内容框架
+        main_frame = ttk.Frame(canvas, padding="20")
         main_frame.columnconfigure(1, weight=1)
+        
+        # 创建窗口用于放置main_frame
+        canvas_window = canvas.create_window((0, 0), window=main_frame, anchor="nw")
+        
+        # 配置Canvas滚动区域
+        def configure_scroll_region(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            # 设置canvas宽度与main_frame相同
+            canvas.itemconfigure(canvas_window, width=event.width)
+        
+        main_frame.bind("<Configure>", configure_scroll_region)
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(canvas_window, width=e.width))
         
         # 标题
         title_font = font.Font(family="微软雅黑", size=18, weight="bold")
         title_label = tk.Label(main_frame, text="软件源代码导出工具", font=title_font, bg="#f0f0f0")
         title_label.grid(row=0, column=0, columnspan=3, pady=20)
         
-        # 项目路径选择
-        ttk.Label(main_frame, text="项目路径:").grid(row=1, column=0, sticky=tk.W, pady=15)
-        self.path_var = tk.StringVar()
-        path_entry = ttk.Entry(main_frame, textvariable=self.path_var, width=50, font=('微软雅黑', 12))
-        path_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
-        browse_btn = ttk.Button(main_frame, text="浏览...", command=self.choose_directory, style='TButton')
-        browse_btn.grid(row=1, column=2, padx=10, pady=15)
+        # 项目路径选择框架 - 可动态添加多个路径
+        paths_frame = ttk.LabelFrame(main_frame, text="项目路径", padding=10)
+        paths_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        paths_frame.columnconfigure(0, weight=1)
         
-        # 文件后缀输入
-        ttk.Label(main_frame, text="文件后缀:").grid(row=2, column=0, sticky=tk.W, pady=15)
-        self.extension_var = tk.StringVar(value="py")
-        extension_entry = ttk.Entry(main_frame, textvariable=self.extension_var, width=50, font=('微软雅黑', 12))
-        extension_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        # 初始化第一个路径选择行
+        self.path_vars = []
+        self.path_frames = []
+        self.add_path_row()
+        
+        # 添加路径按钮
+        add_path_btn = ttk.Button(
+            paths_frame, 
+            text="+ 添加路径", 
+            command=self.add_path_row,
+            style='Add.TButton'
+        )
+        add_path_btn.grid(row=100, column=0, sticky=tk.W, pady=5)
+        
+        # Gitignore 文件选择
+        ttk.Label(main_frame, text="Gitignore 文件:").grid(row=2, column=0, sticky=tk.W, pady=15)
+        self.gitignore_path_var = tk.StringVar()
+        gitignore_entry = ttk.Entry(main_frame, textvariable=self.gitignore_path_var, width=50, font=('微软雅黑', 12))
+        gitignore_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        gitignore_browse_btn = ttk.Button(main_frame, text="浏览...", command=self.choose_gitignore_file, style='TButton')
+        gitignore_browse_btn.grid(row=2, column=2, padx=10, pady=15)
+        
+        # 文件类型模式选择
+        ttk.Label(main_frame, text="文件类型模式:").grid(row=3, column=0, sticky=tk.W, pady=15)
+        
+        # 获取所有模式名称
+        mode_names = list(self.file_type_modes.keys()) + ["其他模式"]
+        self.file_mode_var = tk.StringVar(value=mode_names[0])
+        
+        # 创建模式选择框架
+        mode_frame = ttk.Frame(main_frame)
+        mode_frame.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        mode_frame.columnconfigure(0, weight=1)
+        
+        # 模式选择下拉框
+        mode_selector = ttk.Combobox(
+            mode_frame, 
+            textvariable=self.file_mode_var, 
+            values=mode_names, 
+            state="readonly", 
+            width=20, 
+            font=('微软雅黑', 12)
+        )
+        mode_selector.grid(row=0, column=0, sticky=tk.W)
+        mode_selector.bind("<<ComboboxSelected>>", self.on_mode_selected)
+        
+        # 自定义文件类型输入框
+        self.extension_var = tk.StringVar()
+        self.extension_entry = ttk.Entry(mode_frame, textvariable=self.extension_var, width=30, font=('微软雅黑', 12))
+        self.extension_entry.grid(row=0, column=1, sticky=tk.E, padx=(10, 0))
+        
+        # 添加自定义模式按钮
+        save_mode_btn = ttk.Button(
+            mode_frame, 
+            text="保存为模式", 
+            command=self.save_custom_mode,
+            style='Small.TButton'
+        )
+        save_mode_btn.grid(row=0, column=2, padx=(5, 0))
+        
+        # 初始化文件类型
+        self.update_extension_field()
         
         # 字体选择
-        ttk.Label(main_frame, text="字体:").grid(row=3, column=0, sticky=tk.W, pady=15)
+        ttk.Label(main_frame, text="字体:").grid(row=4, column=0, sticky=tk.W, pady=15)
         self.font_var = tk.StringVar(value="微软雅黑")
-        font_entry = ttk.Entry(main_frame, textvariable=self.font_var, width=50, font=('微软雅黑', 12))
-        font_entry.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
         
-        # 应用名称
-        ttk.Label(main_frame, text="应用名称:").grid(row=4, column=0, sticky=tk.W, pady=15)
-        self.app_name_var = tk.StringVar(value="软件")
-        app_name_entry = ttk.Entry(main_frame, textvariable=self.app_name_var, width=50, font=('微软雅黑', 12))
-        app_name_entry.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        font_frame = ttk.Frame(main_frame)
+        font_frame.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        font_frame.columnconfigure(0, weight=1)
         
-        # 应用名称字体
-        ttk.Label(main_frame, text="应用名称字体:").grid(row=5, column=0, sticky=tk.W, pady=15)
+        font_display = ttk.Entry(font_frame, textvariable=self.font_var, width=50, font=('微软雅黑', 12), state='readonly')
+        font_display.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        font_btn = ttk.Button(font_frame, text="选择字体", command=lambda: self.choose_font(self.font_var), style='TButton')
+        font_btn.grid(row=0, column=1, padx=(5, 0))
+        
+        # 应用名称和字体选择按钮
+        ttk.Label(main_frame, text="应用名称:").grid(row=5, column=0, sticky=tk.W, pady=15)
+        self.app_name_var = tk.StringVar(value="AI简报")
         self.app_name_font_var = tk.StringVar(value="微软雅黑")
-        app_name_font_entry = ttk.Entry(main_frame, textvariable=self.app_name_font_var, width=50, font=('微软雅黑', 12))
-        app_name_font_entry.grid(row=5, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
         
-        # 版本号
+        app_name_frame = ttk.Frame(main_frame)
+        app_name_frame.grid(row=5, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        app_name_frame.columnconfigure(0, weight=1)
+        
+        app_name_entry = ttk.Entry(app_name_frame, textvariable=self.app_name_var, width=50, font=('微软雅黑', 12))
+        app_name_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        app_font_btn = ttk.Button(app_name_frame, text="字体", command=lambda: self.choose_font(self.app_name_font_var), style='Small.TButton', width=5)
+        app_font_btn.grid(row=0, column=1, padx=(5, 0))
+        
+        # 版本号和字体选择按钮
         ttk.Label(main_frame, text="版本号:").grid(row=6, column=0, sticky=tk.W, pady=15)
         self.version_var = tk.StringVar(value="V1.0")
-        version_entry = ttk.Entry(main_frame, textvariable=self.version_var, width=50, font=('微软雅黑', 12))
-        version_entry.grid(row=6, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
-        
-        # 版本号字体
-        ttk.Label(main_frame, text="版本号字体:").grid(row=7, column=0, sticky=tk.W, pady=15)
         self.version_font_var = tk.StringVar(value="微软雅黑")
-        version_font_entry = ttk.Entry(main_frame, textvariable=self.version_font_var, width=50, font=('微软雅黑', 12))
-        version_font_entry.grid(row=7, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        
+        version_frame = ttk.Frame(main_frame)
+        version_frame.grid(row=6, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        version_frame.columnconfigure(0, weight=1)
+        
+        version_entry = ttk.Entry(version_frame, textvariable=self.version_var, width=50, font=('微软雅黑', 12))
+        version_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        version_font_btn = ttk.Button(version_frame, text="字体", command=lambda: self.choose_font(self.version_font_var), style='Small.TButton', width=5)
+        version_font_btn.grid(row=0, column=1, padx=(5, 0))
         
         # 每页行数设置
-        ttk.Label(main_frame, text="每页行数:").grid(row=8, column=0, sticky=tk.W, pady=15)
+        ttk.Label(main_frame, text="每页行数:").grid(row=7, column=0, sticky=tk.W, pady=15)
         self.lines_per_page_var = tk.StringVar(value="55")
         lines_per_page_entry = ttk.Entry(main_frame, textvariable=self.lines_per_page_var, width=50, font=('微软雅黑', 12))
-        lines_per_page_entry.grid(row=8, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        lines_per_page_entry.grid(row=7, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        
+        # 输出文档路径
+        ttk.Label(main_frame, text="输出路径:").grid(row=8, column=0, sticky=tk.W, pady=15)
+        self.output_path_var = tk.StringVar()
+        
+        output_path_frame = ttk.Frame(main_frame)
+        output_path_frame.grid(row=8, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        output_path_frame.columnconfigure(0, weight=1)
+        
+        output_path_entry = ttk.Entry(output_path_frame, textvariable=self.output_path_var, width=50, font=('微软雅黑', 12))
+        output_path_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        output_path_btn = ttk.Button(output_path_frame, text="浏览...", command=self.choose_output_directory, style='TButton')
+        output_path_btn.grid(row=0, column=1, padx=(5, 0))
         
         # 生成模式
         ttk.Label(main_frame, text="生成模式:").grid(row=9, column=0, sticky=tk.W, pady=15)
         self.mode_var = tk.StringVar(value="默认模式")
         mode_selector = ttk.Combobox(main_frame, textvariable=self.mode_var, values=["默认模式", "标准模式"], state="readonly", width=47, font=('微软雅黑', 12))
         mode_selector.grid(row=9, column=1, sticky=(tk.W, tk.E), pady=15, padx=5)
+        
+        # 生成目录选项
+        self.generate_toc_var = tk.BooleanVar(value=False)
+        toc_check = ttk.Checkbutton(main_frame, text="生成目录", variable=self.generate_toc_var)
+        toc_check.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         # 模式说明
         standard_mode_info = ttk.Label(
@@ -99,11 +233,11 @@ class CodeToWordApp:
             justify=tk.LEFT,
             background="#f0f0f0"
         )
-        standard_mode_info.grid(row=10, column=1, sticky=tk.W, pady=5, padx=5)
+        standard_mode_info.grid(row=11, column=1, sticky=tk.W, pady=5, padx=5)
         
         # 生成按钮
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=11, column=0, columnspan=3, pady=30)
+        button_frame.grid(row=12, column=0, columnspan=3, pady=30)
         
         self.style.configure('Generate.TButton', font=('微软雅黑', 14, 'bold'))
         generate_btn = ttk.Button(
@@ -117,20 +251,266 @@ class CodeToWordApp:
         
         # 作者信息
         author_label = ttk.Label(main_frame, text="作者: lijianye", font=('微软雅黑', 10))
-        author_label.grid(row=12, column=0, columnspan=3, sticky=tk.E, pady=10)
+        author_label.grid(row=13, column=0, columnspan=3, sticky=tk.E, pady=10)
         
         # 状态变量（不显示状态框）
         self.status_var = tk.StringVar()
+        self.progress_window = None
         
         # 使窗口可调整大小
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         
-    def choose_directory(self):
+    def add_path_row(self):
+        """添加一个新的项目路径选择行"""
+        # 创建新的路径变量
+        path_var = tk.StringVar()
+        self.path_vars.append(path_var)
+        
+        # 获取路径框架
+        if not hasattr(self, 'paths_frame'):
+            # 第一次调用时，保存路径框架的引用
+            for widget in self.root.winfo_children():
+                if isinstance(widget, ttk.Frame):  # 外层框架
+                    for child in widget.winfo_children():
+                        if isinstance(child, tk.Canvas):  # Canvas
+                            frame_id = child.find_withtag("all")[0]
+                            main_frame = child.itemcget(frame_id, "window")
+                            if main_frame:
+                                main_frame = child.nametowidget(main_frame)
+                                for mf_child in main_frame.winfo_children():
+                                    if isinstance(mf_child, ttk.Labelframe) and mf_child.cget("text") == "项目路径":
+                                        self.paths_frame = mf_child
+                                        break
+        
+        row_idx = len(self.path_frames)
+        path_frame = ttk.Frame(self.paths_frame)
+        path_frame.grid(row=row_idx, column=0, sticky=(tk.W, tk.E), pady=5)
+        path_frame.columnconfigure(0, weight=1)
+        
+        self.path_frames.append(path_frame)
+        
+        # 路径输入框
+        path_entry = ttk.Entry(path_frame, textvariable=path_var, width=50, font=('微软雅黑', 12))
+        path_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        # 浏览按钮
+        browse_btn = ttk.Button(
+            path_frame, 
+            text="浏览...", 
+            command=lambda v=path_var: self.choose_directory(v),
+            style='TButton'
+        )
+        browse_btn.grid(row=0, column=1, padx=5)
+        
+        # 删除按钮（第一行不显示）
+        if row_idx > 0:
+            delete_btn = ttk.Button(
+                path_frame,
+                text="删除",
+                command=lambda idx=row_idx: self.delete_path_row(idx),
+                style='Small.TButton'
+            )
+            delete_btn.grid(row=0, column=2)
+    
+    def delete_path_row(self, idx):
+        """删除指定索引的路径行"""
+        if idx < len(self.path_frames) and idx > 0:  # 不允许删除第一行
+            # 销毁UI元素
+            self.path_frames[idx].destroy()
+            # 从列表中移除
+            self.path_frames.pop(idx)
+            self.path_vars.pop(idx)
+            
+            # 重新排列剩余行
+            for i in range(idx, len(self.path_frames)):
+                self.path_frames[i].grid(row=i, column=0)
+                # 更新删除按钮的命令
+                delete_btn = self.path_frames[i].winfo_children()[2]
+                delete_btn.configure(command=lambda idx=i: self.delete_path_row(idx))
+    
+    def choose_directory(self, path_var):
+        """选择目录并设置到指定的StringVar中"""
         directory = filedialog.askdirectory()
         if directory:
-            self.path_var.set(directory)
+            path_var.set(directory)
     
+    def choose_output_directory(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.output_path_var.set(directory)
+    
+    def choose_gitignore_file(self):
+        """打开文件对话框选择.gitignore文件"""
+        filepath = filedialog.askopenfilename(
+            title="选择 .gitignore 文件",
+            filetypes=[("Gitignore files", ".gitignore"), ("All files", "*.*")]
+        )
+        if filepath:
+            self.gitignore_path_var.set(filepath)
+            
+    def load_config(self):
+        """加载配置文件"""
+        try:
+            if os.path.exists(self.config_file):
+                self.config.read(self.config_file, encoding='utf-8')
+                
+                # 加载自定义模式
+                if 'CustomModes' in self.config:
+                    for mode_name, extensions in self.config['CustomModes'].items():
+                        if mode_name not in self.file_type_modes:
+                            self.file_type_modes[mode_name] = extensions.split(',')
+        except Exception as e:
+            print(f"加载配置文件失败: {e}")
+    
+    def save_config(self):
+        """保存配置到文件"""
+        try:
+            # 确保存在CustomModes部分
+            if 'CustomModes' not in self.config:
+                self.config['CustomModes'] = {}
+            
+            # 保存自定义模式
+            custom_modes = {k: ','.join(v) for k, v in self.file_type_modes.items() 
+                           if k not in ["前端模式", "后端模式", "混合模式"]}
+            
+            self.config['CustomModes'] = custom_modes
+            
+            # 写入文件
+            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                self.config.write(f)
+        except Exception as e:
+            messagebox.showerror("错误", f"保存配置失败: {e}")
+    
+    def on_mode_selected(self, event=None):
+        """当文件类型模式被选择时更新扩展名输入框"""
+        self.update_extension_field()
+    
+    def update_extension_field(self):
+        """根据选择的模式更新扩展名输入框"""
+        mode = self.file_mode_var.get()
+        
+        if mode == "其他模式":
+            # 启用输入框
+            self.extension_entry.config(state='normal')
+        else:
+            # 显示预设模式的扩展名
+            extensions = self.file_type_modes.get(mode, [])
+            self.extension_var.set(','.join(extensions))
+            # 禁用输入框，除非是自定义模式
+            is_custom = mode not in ["前端模式", "后端模式", "混合模式"]
+            self.extension_entry.config(state='normal' if is_custom else 'readonly')
+    
+    def save_custom_mode(self):
+        """保存当前扩展名设置为自定义模式"""
+        extensions = [ext.strip() for ext in self.extension_var.get().split(',') if ext.strip()]
+        if not extensions:
+            messagebox.showerror("错误", "请输入至少一个文件类型")
+            return
+            
+        # 弹出对话框让用户输入模式名称
+        mode_dialog = Toplevel(self.root)
+        mode_dialog.title("保存自定义模式")
+        mode_dialog.geometry("400x150")
+        mode_dialog.resizable(False, False)
+        mode_dialog.transient(self.root)
+        
+        ttk.Label(mode_dialog, text="请输入模式名称:").pack(pady=(20, 10))
+        
+        mode_name_var = tk.StringVar()
+        mode_name_entry = ttk.Entry(mode_dialog, textvariable=mode_name_var, width=30, font=('微软雅黑', 12))
+        mode_name_entry.pack(padx=20, fill=tk.X)
+        
+        def on_save():
+            mode_name = mode_name_var.get().strip()
+            if not mode_name:
+                messagebox.showerror("错误", "模式名称不能为空")
+                return
+                
+            if mode_name in ["前端模式", "后端模式", "混合模式", "其他模式"]:
+                messagebox.showerror("错误", "不能使用预设模式名称")
+                return
+                
+            # 保存模式
+            self.file_type_modes[mode_name] = extensions
+            
+            # 更新下拉框选项
+            # 寻找模式选择下拉框
+            for widget in self.root.winfo_children():
+                if isinstance(widget, ttk.Frame):  # 外层框架
+                    for child in widget.winfo_children():
+                        if isinstance(child, tk.Canvas):  # Canvas
+                            frame_id = child.find_withtag("all")[0]
+                            main_frame = child.itemcget(frame_id, "window")
+                            if main_frame:
+                                main_frame = child.nametowidget(main_frame)
+                                for i, mf_child in enumerate(main_frame.winfo_children()):
+                                    if i == 3:  # 第4个子元素应该是文件类型模式框架
+                                        mode_frame = mf_child.winfo_children()[1]  # 获取模式框架
+                                        mode_selector = mode_frame.winfo_children()[0]  # 获取下拉框
+                                        break
+            
+            # 更新下拉框
+            mode_names = list(self.file_type_modes.keys()) + ["其他模式"]
+            mode_selector['values'] = mode_names
+            self.file_mode_var.set(mode_name)
+            
+            # 保存到配置文件
+            self.save_config()
+            
+            messagebox.showinfo("成功", f"已保存模式 '{mode_name}'")
+            mode_dialog.destroy()
+            
+        # 按钮框架
+        btn_frame = ttk.Frame(mode_dialog)
+        btn_frame.pack(pady=20, fill=tk.X)
+        
+        ttk.Button(btn_frame, text="保存", command=on_save).pack(side=tk.RIGHT, padx=10)
+        ttk.Button(btn_frame, text="取消", command=mode_dialog.destroy).pack(side=tk.RIGHT, padx=10)
+        
+        # 聚焦输入框
+        mode_name_entry.focus_set()
+    
+    def choose_font(self, font_var):
+        """打开字体选择对话框"""
+        font_dialog = Toplevel(self.root)
+        font_dialog.title("选择字体")
+        font_dialog.geometry("400x300")
+        font_dialog.resizable(False, False)
+        font_dialog.transient(self.root)
+        
+        # 获取系统字体列表
+        font_list = list(font.families())
+        font_list.sort()
+        
+        # 创建字体列表框
+        font_listbox = tk.Listbox(font_dialog, font=('微软雅黑', 10), height=10)
+        font_listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # 添加字体到列表框
+        for f in font_list:
+            font_listbox.insert(tk.END, f)
+        
+        # 如果当前字体在列表中，选中它
+        current_font = font_var.get()
+        if current_font in font_list:
+            index = font_list.index(current_font)
+            font_listbox.see(index)
+            font_listbox.selection_set(index)
+        
+        # 确定按钮回调
+        def on_select():
+            selection = font_listbox.curselection()
+            if selection:
+                selected_font = font_list[selection[0]]
+                font_var.set(selected_font)
+            font_dialog.destroy()
+        
+        # 确定按钮
+        select_btn = ttk.Button(font_dialog, text="确定", command=on_select)
+        select_btn.pack(pady=10)
+
     def detect_encoding(self, file_path):
         """检测文件编码"""
         with open(file_path, 'rb') as f:
@@ -163,8 +543,8 @@ class CodeToWordApp:
             r = run._element
             r.rPr.rFonts.set(qn('w:eastAsia'), font_name)
     
-    def add_header(self, doc, app_name, version, app_name_font, version_font):
-        """添加页眉"""
+    def add_header_footer(self, doc, app_name, version, app_name_font, version_font):
+        """添加页眉和页码"""
         # 获取第一节
         section = doc.sections[0]
         
@@ -194,16 +574,98 @@ class CodeToWordApp:
         
         # 设置页眉段落格式
         header_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+        
+        # 添加页码（第n页/共m页）
+        footer = section.footer
+        footer_para = footer.paragraphs[0]
+        footer_para.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+        
+        # 添加"第"
+        page_text_run = footer_para.add_run("第")
+        page_text_run.font.name = "微软雅黑"
+        page_text_run.font.size = Pt(10)
+        r_text = page_text_run._element
+        r_text.rPr.rFonts.set(qn('w:eastAsia'), "微软雅黑")
+        
+        # 添加当前页码域代码
+        run = footer_para.add_run()
+        fldChar1 = OxmlElement('w:fldChar')
+        fldChar1.set(shared_qn('w:fldCharType'), 'begin')
+        run._r.append(fldChar1)
+        
+        instrText = OxmlElement('w:instrText')
+        instrText.set(shared_qn('xml:space'), 'preserve')
+        instrText.text = ' PAGE '
+        run._r.append(instrText)
+        
+        fldChar2 = OxmlElement('w:fldChar')
+        fldChar2.set(shared_qn('w:fldCharType'), 'end')
+        run._r.append(fldChar2)
+        
+        # 添加"页/共"
+        page_text_run2 = footer_para.add_run("页/共")
+        page_text_run2.font.name = "微软雅黑"
+        page_text_run2.font.size = Pt(10)
+        r_text2 = page_text_run2._element
+        r_text2.rPr.rFonts.set(qn('w:eastAsia'), "微软雅黑")
+        
+        # 添加总页数域代码
+        run = footer_para.add_run()
+        fldChar3 = OxmlElement('w:fldChar')
+        fldChar3.set(shared_qn('w:fldCharType'), 'begin')
+        run._r.append(fldChar3)
+        
+        instrText = OxmlElement('w:instrText')
+        instrText.set(shared_qn('xml:space'), 'preserve')
+        instrText.text = ' NUMPAGES '
+        run._r.append(instrText)
+        
+        fldChar4 = OxmlElement('w:fldChar')
+        fldChar4.set(shared_qn('w:fldCharType'), 'end')
+        run._r.append(fldChar4)
+        
+        # 添加"页"
+        page_text_run3 = footer_para.add_run("页")
+        page_text_run3.font.name = "微软雅黑"
+        page_text_run3.font.size = Pt(10)
+        r_text3 = page_text_run3._element
+        r_text3.rPr.rFonts.set(qn('w:eastAsia'), "微软雅黑")
             
+    def _create_progress_window(self, total_files):
+        """创建并显示进度条窗口"""
+        self.progress_window = Toplevel(self.root)
+        self.progress_window.title("正在生成")
+        self.progress_window.geometry("400x120")
+        self.progress_window.resizable(False, False)
+        self.progress_window.transient(self.root) # 保持在主窗口之上
+        
+        ttk.Label(self.progress_window, text="正在处理文件...", font=('微软雅黑', 12)).pack(pady=10)
+        
+        self.progress_bar = ttk.Progressbar(self.progress_window, orient="horizontal", length=350, mode="determinate")
+        self.progress_bar.pack(pady=5)
+        self.progress_bar["maximum"] = total_files
+        
+        self.progress_label = ttk.Label(self.progress_window, text="", font=('微软雅黑', 9))
+        self.progress_label.pack(pady=5)
+        
+        self.root.update_idletasks()
+
     def generate_document(self):
-        path = self.path_var.get()
-        if not path:
-            messagebox.showerror("错误", "请选择项目路径")
+        # 收集所有项目路径
+        paths = [var.get() for var in self.path_vars if var.get()]
+        if not paths:
+            messagebox.showerror("错误", "请至少选择一个项目路径")
             return
             
-        extensions = [ext.strip() for ext in self.extension_var.get().split(',')]
+        # 获取文件类型
+        mode = self.file_mode_var.get()
+        if mode == "其他模式":
+            extensions = [ext.strip() for ext in self.extension_var.get().split(',')]
+        else:
+            extensions = self.file_type_modes.get(mode, [])
+            
         if not extensions:
-            messagebox.showerror("错误", "请输入文件后缀")
+            messagebox.showerror("错误", "请选择或输入文件类型")
             return
         
         font_name = self.font_var.get()
@@ -232,30 +694,80 @@ class CodeToWordApp:
         font_size = max(8, min(12, font_size))
         
         try:
-            # --- Stage 1: Collect all lines from all files ---
-            all_styled_lines = []
-            base_path = pathlib.Path(path)
-            lines_by_ext = {}
+            # --- Stage 1: File Discovery & .gitignore Filtering ---
+            all_files = []
             
-            for extension in extensions:
-                extension = extension.strip('.')
-                lines_by_ext[f".{extension}"] = 0
-                for file_path in base_path.rglob(f"*.{extension}"):
-                    relative_path = str(file_path.relative_to(base_path))
-                    all_styled_lines.append((relative_path, 'path'))
-                    
-                    try:
-                        encoding = self.detect_encoding(file_path)
-                        lines = self.read_file_lines(file_path, encoding)
-                        lines_by_ext[f".{extension}"] += len(lines)
-                        for line in lines:
-                            all_styled_lines.append((line, 'code'))
-                    except Exception as e:
-                        all_styled_lines.append((f"无法读取文件: {relative_path} ({e})", 'error'))
+            # 获取 .gitignore 规则
+            gitignore_path_str = self.gitignore_path_var.get()
+            gitignore_path = None
+            spec = None
+            
+            if gitignore_path_str and os.path.exists(gitignore_path_str):
+                gitignore_path = pathlib.Path(gitignore_path_str)
+                with open(gitignore_path, 'r', encoding='utf-8') as f:
+                    spec = pathspec.PathSpec.from_lines('gitwildmatch', f)
+            
+            # 遍历所有项目路径收集文件
+            for path in paths:
+                base_path = pathlib.Path(path)
+                
+                # 如果没有指定gitignore但项目中有，使用项目中的
+                if not spec and (base_path / '.gitignore').is_file():
+                    with open(base_path / '.gitignore', 'r', encoding='utf-8') as f:
+                        spec = pathspec.PathSpec.from_lines('gitwildmatch', f)
+                
+                # 收集所有匹配的文件
+                for extension in extensions:
+                    extension = extension.strip('.')
+                    all_files.extend(base_path.rglob(f"*.{extension}"))
 
-            file_count = len([1 for text, style in all_styled_lines if style == 'path'])
+            files_to_process = []
+            ignored_files = []
+            if spec:
+                for f in all_files:
+                    if not spec.match_file(str(f.relative_to(base_path))):
+                        files_to_process.append(f)
+                    else:
+                        ignored_files.append(str(f.relative_to(base_path)))
+            else:
+                files_to_process = all_files
 
-            # --- Stage 2: Decide which lines to print based on mode ---
+            # --- Stage 1.5: Setup Progress Bar ---
+            self._create_progress_window(len(files_to_process))
+
+            # --- Stage 2: Collect all lines from all files ---
+            all_styled_lines = []
+            lines_by_ext = {}
+
+            for i, file_path in enumerate(files_to_process):
+                # Update progress
+                self.progress_bar['value'] = i + 1
+                self.progress_label['text'] = f"正在处理: {file_path.name}"
+                self.progress_window.update_idletasks()
+
+                ext = file_path.suffix
+                if ext not in lines_by_ext:
+                    lines_by_ext[ext] = 0
+                
+                relative_path = str(file_path.relative_to(base_path))
+                all_styled_lines.append((relative_path, 'path'))
+                
+                try:
+                    encoding = self.detect_encoding(file_path)
+                    lines = self.read_file_lines(file_path, encoding)
+                    lines_by_ext[ext] += len(lines)
+                    for line in lines:
+                        all_styled_lines.append((line, 'code'))
+                except Exception as e:
+                    all_styled_lines.append((f"无法读取文件: {relative_path} ({e})", 'error'))
+
+            file_count = len(files_to_process)
+            
+            if self.progress_window:
+                self.progress_window.destroy()
+                self.progress_window = None
+
+            # --- Stage 3: Decide which lines to print based on mode ---
             lines_to_print = []
             total_lines = len(all_styled_lines)
             total_pages = total_lines / lines_per_page
@@ -278,7 +790,7 @@ class CodeToWordApp:
             if final_mode == "默认模式":
                 lines_to_print = all_styled_lines
 
-            # --- Stage 3: Generate the document from the prepared line list ---
+            # --- Stage 4: Generate the document from the prepared line list ---
             doc = Document()
             # 设置文档页面大小和边距
             for section in doc.sections:
@@ -304,7 +816,36 @@ class CodeToWordApp:
             style.paragraph_format.space_before = Pt(0)
             style.paragraph_format.space_after = Pt(0)
             
-            self.add_header(doc, app_name, version, app_name_font, version_font)
+            self.add_header_footer(doc, app_name, version, app_name_font, version_font)
+            
+            # 如果需要生成目录
+            if self.generate_toc_var.get():
+                doc.add_paragraph("目录", style="Heading 1")
+                doc.add_paragraph()  # 添加空行
+                
+                # 添加目录域代码
+                paragraph = doc.add_paragraph()
+                run = paragraph.add_run()
+                
+                fldChar = OxmlElement('w:fldChar')
+                fldChar.set(shared_qn('w:fldCharType'), 'begin')
+                run._r.append(fldChar)
+                
+                instrText = OxmlElement('w:instrText')
+                instrText.set(shared_qn('xml:space'), 'preserve')
+                instrText.text = 'TOC \\o "1-3" \\h \\z \\u'
+                run._r.append(instrText)
+                
+                fldChar = OxmlElement('w:fldChar')
+                fldChar.set(shared_qn('w:fldCharType'), 'separate')
+                run._r.append(fldChar)
+                
+                fldChar = OxmlElement('w:fldChar')
+                fldChar.set(shared_qn('w:fldCharType'), 'end')
+                run._r.append(fldChar)
+                
+                # 添加分节符，开始新节
+                doc.add_section(WD_SECTION.NEW_PAGE)
             
             for text, style_type in lines_to_print:
                 if style_type == 'path':
@@ -319,6 +860,10 @@ class CodeToWordApp:
                     path_para.paragraph_format.space_after = Pt(0)
                     path_para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
                     path_para.paragraph_format.line_spacing = Pt((font_size + 1) * 1.1)
+                    
+                    # 如果生成目录，将文件路径设置为标题样式，以便在目录中显示
+                    if self.generate_toc_var.get():
+                        path_para.style = 'Heading 2'
                 elif style_type == 'code' or style_type == 'error':
                     content_para = doc.add_paragraph(text)
                     self.apply_style_to_paragraph(content_para, font_name, font_size)
@@ -328,12 +873,21 @@ class CodeToWordApp:
                     sep_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
                     self.apply_style_to_paragraph(sep_para, font_name, font_size)
 
-            # --- Stage 4: Save and open ---
-            save_path = filedialog.asksaveasfilename(
-                defaultextension=".docx",
-                filetypes=[("Word documents", "*.docx")],
-                initialfile="源代码导出.docx"
-            )
+            # --- Stage 5: Save and open ---
+            save_path = ""
+            output_dir = self.output_path_var.get()
+            
+            if output_dir:
+                # 如果指定了输出目录，直接在该目录下保存文件
+                filename = f"{app_name}_{version}_源代码.docx"
+                save_path = os.path.join(output_dir, filename)
+            else:
+                # 否则弹出保存对话框
+                save_path = filedialog.asksaveasfilename(
+                    defaultextension=".docx",
+                    filetypes=[("Word documents", "*.docx")],
+                    initialfile="源代码导出.docx"
+                )
             
             if save_path:
                 doc.save(save_path)
@@ -346,6 +900,14 @@ class CodeToWordApp:
                     stats_details += f"  - {ext} 文件: {count} 行\n"
                 stats_details += f"总代码行数: {total_code_lines} 行"
 
+                ignored_details = ""
+                if ignored_files:
+                    ignored_details = "\n\n根据 .gitignore 忽略了以下文件:\n"
+                    for f in ignored_files[:10]: # 最多显示10个
+                        ignored_details += f"  - {f}\n"
+                    if len(ignored_files) > 10:
+                        ignored_details += f"  ...等共 {len(ignored_files)} 个文件\n"
+
                 success_message = f"文档已生成完成！\n共处理 {file_count} 个文件。"
                 if final_mode == "标准模式":
                     success_message += "\n模式：标准模式 (前30页 + 后30页)"
@@ -353,6 +915,7 @@ class CodeToWordApp:
                     success_message += f"\n模式：默认模式 (共 {total_pages:.1f} 页)"
                 
                 success_message += stats_details
+                success_message += ignored_details
 
                 messagebox.showinfo("成功", success_message)
                 try:
@@ -361,6 +924,8 @@ class CodeToWordApp:
                     messagebox.showwarning("提示", f"无法自动打开文件：{e}")
             
         except Exception as e:
+            if self.progress_window:
+                self.progress_window.destroy()
             messagebox.showerror("错误", f"生成文档时发生错误：{str(e)}")
 
 def main():
@@ -369,4 +934,4 @@ def main():
     root.mainloop()
 
 if __name__ == "__main__":
-    main() 
+    main()

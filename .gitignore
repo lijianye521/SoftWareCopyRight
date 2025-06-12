@@ -1,0 +1,59 @@
+# 构建输出目录
+build/
+dist/
+__pycache__/
+
+# 编译的Python文件
+*.py[cod]
+*$py.class
+*.so
+
+# 发行版/打包文件
+*.egg
+*.egg-info/
+.eggs/
+*.toc
+*.manifest
+*.spec
+
+# 安装日志
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 单元测试/覆盖率报告
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+
+# 环境
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE相关文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 配置文件
+src/config.ini
+
+# Windows特定文件
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS特定文件
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
