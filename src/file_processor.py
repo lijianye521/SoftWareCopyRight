@@ -24,7 +24,7 @@ class FileProcessor:
         return [line for line in lines if line.strip()]
     
     def collect_files(self, paths, extensions, gitignore_path=None):
-        """收集所有匹配的文件"""
+        """收集所有匹配的文件，支持目录和单个文件"""
         all_files = []
         ignored_files = []
         
@@ -41,11 +41,16 @@ class FileProcessor:
             
             # 为每个项目路径单独处理gitignore
             current_spec = spec
-            if not current_spec and (base_path / '.gitignore').is_file():
+            if not current_spec and base_path.is_dir() and (base_path / '.gitignore').is_file():
                 with open(base_path / '.gitignore', 'r', encoding='utf-8') as f:
                     current_spec = pathspec.PathSpec.from_lines('gitwildmatch', f)
             
-            # 收集当前路径下的所有匹配文件
+            # 如果是文件，直接添加
+            if base_path.is_file():
+                all_files.append(base_path)
+                continue
+                
+            # 如果是目录，收集当前路径下的所有匹配文件
             current_files = []
             for extension in extensions:
                 extension = extension.strip('.')
@@ -68,7 +73,7 @@ class FileProcessor:
         
         return all_files, ignored_files
     
-    def process_files(self, files_to_process, paths, progress_callback=None):
+    def process_files(self, files_to_process, paths, root_dir=None, progress_callback=None):
         """处理文件列表，返回样式化的行列表和统计信息"""
         all_styled_lines = []
         lines_by_ext = {}
@@ -81,20 +86,46 @@ class FileProcessor:
             if ext not in lines_by_ext:
                 lines_by_ext[ext] = 0
             
-            # 找到文件所属的项目路径
-            project_base = None
-            for path in paths:
+            # 处理文件路径显示逻辑
+            if root_dir:
+                # 如果设置了主根目录，尝试从主根目录开始计算相对路径
+                root_path = pathlib.Path(root_dir)
                 try:
-                    file_path.relative_to(pathlib.Path(path))
-                    project_base = pathlib.Path(path)
-                    break
+                    # 尝试计算相对于主根目录的路径
+                    relative_path = str(file_path.relative_to(root_path))
                 except ValueError:
-                    continue
-            
-            if project_base:
-                relative_path = str(file_path.relative_to(project_base))
+                    # 如果文件不在主根目录下，则使用原始逻辑
+                    project_base = None
+                    for path in paths:
+                        try:
+                            file_path.relative_to(pathlib.Path(path))
+                            project_base = pathlib.Path(path)
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if project_base:
+                        # 如果文件在项目路径下，计算相对路径并加上主根目录前缀
+                        file_relative = file_path.relative_to(project_base)
+                        relative_path = os.path.join(root_path.name, file_relative)
+                    else:
+                        # 如果文件不在任何项目路径下，直接使用文件名
+                        relative_path = str(file_path)
             else:
-                relative_path = str(file_path)
+                # 原始逻辑：找到文件所属的项目路径
+                project_base = None
+                for path in paths:
+                    try:
+                        file_path.relative_to(pathlib.Path(path))
+                        project_base = pathlib.Path(path)
+                        break
+                    except ValueError:
+                        continue
+                
+                if project_base:
+                    relative_path = str(file_path.relative_to(project_base))
+                else:
+                    relative_path = str(file_path)
                 
             all_styled_lines.append((relative_path, 'path'))
             

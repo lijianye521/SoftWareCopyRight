@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
+import pathlib
+import datetime as dt
 from PIL import Image, ImageTk, ImageDraw  # 用于美化界面图标
 import sv_ttk  # 用于现代化Tkinter主题
 
@@ -8,7 +10,8 @@ import sv_ttk  # 用于现代化Tkinter主题
 from config_manager import ConfigManager
 from file_processor import FileProcessor
 from document_generator import DocumentGenerator
-from ui_components import FontSelector, CustomModeDialog, ProgressWindow
+from similarity_analyzer import SimilarityAnalyzer
+from ui_components import FontSelector, CustomModeDialog, ProgressWindow, SimilarityAnalysisFrame
 
 class CodeToWordApp:
     # 添加创建圆角图像的方法
@@ -52,15 +55,15 @@ class CodeToWordApp:
         self.style.configure('TLabel', font=label_font)
         self.style.configure('TEntry', font=entry_font)
         self.style.configure('TButton', font=button_font)
-        self.style.configure('TLabelframe.Label', font=label_font)
+        self.style.configure('TLabelframe.Label', font=('楷体', 18, 'bold'))
         self.style.configure('TCheckbutton', font=label_font)
         self.style.configure('TCombobox', font=entry_font)
         
         self.style.configure('Small.TButton', font=button_font)
         self.style.configure('Add.TButton', font=button_font, padding=(10, 5))
-        self.style.configure('Generate.TButton', font=('楷体', 16, 'bold'), padding=(20, 10))
-        self.style.configure('Title.TLabel', font=('楷体', 24, 'bold'), foreground="#4361ee")
-        self.style.configure('Subtitle.TLabel', font=('楷体', 16))
+        self.style.configure('Generate.TButton', font=('楷体', 20, 'bold'), padding=(30, 15))
+        self.style.configure('Title.TLabel', font=('楷体', 32, 'bold'))
+        self.style.configure('Subtitle.TLabel', font=('楷体', 24))
         self.style.configure('Info.TLabel', font=('楷体', 14))
         
         # 创建圆角按钮图像
@@ -73,6 +76,7 @@ class CodeToWordApp:
         self.config_manager = ConfigManager()
         self.file_processor = FileProcessor()
         self.document_generator = DocumentGenerator()
+        self.similarity_analyzer = SimilarityAnalyzer()
         
         # 延迟加载用户自定义模式以提高启动速度
         self.root.after_idle(self.config_manager.load_config)
@@ -86,9 +90,33 @@ class CodeToWordApp:
         outer_frame.columnconfigure(0, weight=1)
         outer_frame.rowconfigure(0, weight=1)
         
+        # 创建标签页
+        self.notebook = ttk.Notebook(outer_frame)
+        self.notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 第一个标签页 - 源代码导出
+        self.code_export_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.code_export_tab, text="源代码导出")
+        
+        # 第二个标签页 - 文件相似度分析
+        self.similarity_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.similarity_tab, text="文件相似度分析")
+        
+        # 在源代码导出标签页中创建滚动区域
+        self.create_code_export_tab()
+        
+        # 在文件相似度分析标签页中创建内容
+        self.create_similarity_tab()
+        
+        # 使窗口可调整大小
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+    
+    def create_code_export_tab(self):
+        """创建源代码导出标签页内容"""
         # 创建Canvas和滚动条
-        canvas = tk.Canvas(outer_frame, bg="#f8f9fa", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
+        canvas = tk.Canvas(self.code_export_tab, bg="#f8f9fa", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.code_export_tab, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
         
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
@@ -116,32 +144,57 @@ class CodeToWordApp:
         
         canvas.bind_all("<MouseWheel>", _on_mousewheel)
         
-
-        
         # 标题和图标
         header_frame = ttk.Frame(main_frame)
         header_frame.grid(row=0, column=0, columnspan=3, pady=(0, 30))
         
-        # 创建标题
-        title_label = ttk.Label(
+        # 创建标题 - 使用tk.Label而不是ttk.Label以直接控制字体
+        title_label = tk.Label(
             header_frame, 
             text="软件源代码导出工具", 
-            style='Title.TLabel'
+            font=('楷体', 40, 'bold'),
+            fg="#4361ee",
+            bg="#f8f9fa"  # 与背景色保持一致
         )
         title_label.pack(pady=15)
         
-        # 副标题
-        subtitle_label = ttk.Label(
+        # 副标题 - 同样使用tk.Label
+        subtitle_label = tk.Label(
             header_frame, 
             text="用于软件著作权申请的源代码文档生成器", 
-            style='Subtitle.TLabel'
+            font=('楷体', 24),
+            bg="#f8f9fa"  # 与背景色保持一致
         )
         subtitle_label.pack(pady=5)
         
+        # 主根目录设置框架
+        root_dir_frame = ttk.LabelFrame(main_frame, text="主根目录设置", padding=15)
+        root_dir_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
+        root_dir_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(root_dir_frame, text="主根目录:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.root_dir_var = tk.StringVar()
+        root_dir_entry = ttk.Entry(root_dir_frame, textvariable=self.root_dir_var, width=50)
+        root_dir_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        root_dir_browse_btn = ttk.Button(root_dir_frame, text="浏览...", command=self.choose_root_directory)
+        root_dir_browse_btn.grid(row=0, column=2, padx=10, pady=5)
+        
+        # 添加说明文本
+        root_dir_info = ttk.Label(
+            root_dir_frame, 
+            text="设置主根目录后，所有文件路径将从此目录开始计算。如不设置，则使用各项目路径作为起点。", 
+            style='Info.TLabel',
+            wraplength=750
+        )
+        root_dir_info.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=5)
+        
         # 项目路径选择框架 - 可动态添加多个路径
         paths_frame = ttk.LabelFrame(main_frame, text="项目路径", padding=15)
-        paths_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
+        paths_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
         paths_frame.columnconfigure(0, weight=1)
+        
+        # 保存paths_frame的引用，供add_path_row使用
+        self.paths_frame = paths_frame
         
         # 初始化第一个路径选择行
         self.path_vars = []
@@ -159,7 +212,7 @@ class CodeToWordApp:
         
         # Gitignore 文件选择框架
         gitignore_frame = ttk.LabelFrame(main_frame, text="Gitignore 设置", padding=15)
-        gitignore_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
+        gitignore_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
         gitignore_frame.columnconfigure(1, weight=1)
         
         ttk.Label(gitignore_frame, text="Gitignore 文件:").grid(row=0, column=0, sticky=tk.W, pady=5)
@@ -171,7 +224,7 @@ class CodeToWordApp:
         
         # 文件类型模式选择框架
         file_types_frame = ttk.LabelFrame(main_frame, text="文件类型设置", padding=15)
-        file_types_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
+        file_types_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
         file_types_frame.columnconfigure(1, weight=1)
         
         # 获取所有模式名称
@@ -213,7 +266,7 @@ class CodeToWordApp:
         
         # 文档设置框架
         doc_settings_frame = ttk.LabelFrame(main_frame, text="文档设置", padding=15)
-        doc_settings_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
+        doc_settings_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
         doc_settings_frame.columnconfigure(1, weight=1)
         
         # 字体选择
@@ -256,7 +309,7 @@ class CodeToWordApp:
         
         # 输出设置框架
         output_frame = ttk.LabelFrame(main_frame, text="输出设置", padding=15)
-        output_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
+        output_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
         output_frame.columnconfigure(1, weight=1)
         
         # 输出文档路径
@@ -269,15 +322,9 @@ class CodeToWordApp:
         output_path_btn = ttk.Button(output_frame, text="浏览...", command=self.choose_output_directory)
         output_path_btn.grid(row=0, column=2, padx=5, pady=10)
         
-        # 生成模式
-        ttk.Label(output_frame, text="生成模式:").grid(row=1, column=0, sticky=tk.W, pady=10)
-        self.mode_var = tk.StringVar(value="默认模式")
-        mode_selector = ttk.Combobox(output_frame, textvariable=self.mode_var, values=["默认模式", "标准模式"], state="readonly")
-        mode_selector.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=10, padx=5)
-        
         # 选项框架
         options_frame = ttk.LabelFrame(output_frame, text="文档选项", padding=10)
-        options_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(15, 0))
+        options_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(15, 0))
         options_frame.columnconfigure(0, weight=1)
         options_frame.columnconfigure(1, weight=1)
         
@@ -290,19 +337,6 @@ class CodeToWordApp:
         self.show_line_numbers_var = tk.BooleanVar(value=False)
         line_numbers_check = ttk.Checkbutton(options_frame, text="显示行号", variable=self.show_line_numbers_var)
         line_numbers_check.grid(row=0, column=1, sticky=tk.W, padx=20, pady=10)
-        
-        # 模式说明
-        info_frame = ttk.LabelFrame(main_frame, text="模式说明", padding=15)
-        info_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=15, padx=5)
-        
-        standard_mode_info = ttk.Label(
-            info_frame, 
-            text="• 默认模式：生成所有源代码文件。\n• 标准模式：用于软件著作权申请，将生成源代码文件的前30页和后30页。\n  要求总代码量超过60页，否则将按默认模式生成。", 
-            style='Info.TLabel',
-            wraplength=750, 
-            justify=tk.LEFT
-        )
-        standard_mode_info.pack(anchor=tk.W, pady=10)
         
         # 生成按钮
         button_frame = ttk.Frame(main_frame)
@@ -330,35 +364,44 @@ class CodeToWordApp:
         author_label = ttk.Label(footer_frame, text="作者: lijianye")
         author_label.grid(row=0, column=1, sticky=tk.E)
         
-        # 状态变量（不显示状态框）
-        self.status_var = tk.StringVar()
-        self.progress_window = None
+        # 使滚动区域可调整大小
+        self.code_export_tab.columnconfigure(0, weight=1)
+        self.code_export_tab.rowconfigure(0, weight=1)
+    
+    def create_similarity_tab(self):
+        """创建文件相似度分析标签页内容"""
+        # 创建标题框架
+        header_frame = ttk.Frame(self.similarity_tab, padding=20)
+        header_frame.pack(fill=tk.X)
         
-        # 使窗口可调整大小
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        # 创建标题
+        title_label = tk.Label(
+            header_frame, 
+            text="文件相似度分析", 
+            font=('楷体', 40, 'bold'),
+            fg="#4361ee",
+            bg="#f8f9fa"  # 与背景色保持一致
+        )
+        title_label.pack(pady=15)
         
+        # 副标题
+        subtitle_label = tk.Label(
+            header_frame, 
+            text="分析多个Word文档之间的相似度", 
+            font=('楷体', 24),
+            bg="#f8f9fa"  # 与背景色保持一致
+        )
+        subtitle_label.pack(pady=5)
+        
+        # 创建相似度分析框架
+        similarity_frame = SimilarityAnalysisFrame(self.similarity_tab, self.similarity_analyzer)
+        similarity_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+    
     def add_path_row(self):
         """添加一个新的项目路径选择行"""
         # 创建新的路径变量
         path_var = tk.StringVar()
         self.path_vars.append(path_var)
-        
-        # 获取路径框架
-        if not hasattr(self, 'paths_frame'):
-            # 第一次调用时，保存路径框架的引用
-            for widget in self.root.winfo_children():
-                if isinstance(widget, ttk.Frame):  # 外层框架
-                    for child in widget.winfo_children():
-                        if isinstance(child, tk.Canvas):  # Canvas
-                            frame_id = child.find_withtag("all")[0]
-                            main_frame = child.itemcget(frame_id, "window")
-                            if main_frame:
-                                main_frame = child.nametowidget(main_frame)
-                                for mf_child in main_frame.winfo_children():
-                                    if isinstance(mf_child, ttk.Labelframe) and mf_child.cget("text") == "项目路径":
-                                        self.paths_frame = mf_child
-                                        break
         
         row_idx = len(self.path_frames)
         path_frame = ttk.Frame(self.paths_frame)
@@ -415,10 +458,40 @@ class CodeToWordApp:
                 delete_btn.configure(command=lambda idx=i: self.delete_path_row(idx))
     
     def choose_directory(self, path_var):
-        """选择目录并设置到指定的StringVar中"""
-        directory = filedialog.askdirectory()
-        if directory:
-            path_var.set(directory)
+        """选择目录或文件并设置到指定的StringVar中"""
+        # 创建选择框架
+        choice_frame = tk.Toplevel(self.root)
+        choice_frame.title("选择")
+        choice_frame.geometry("300x150")
+        choice_frame.resizable(False, False)
+        
+        # 居中显示
+        choice_frame.update_idletasks()
+        width = choice_frame.winfo_width()
+        height = choice_frame.winfo_height()
+        x = (choice_frame.winfo_screenwidth() // 2) - (width // 2)
+        y = (choice_frame.winfo_screenheight() // 2) - (height // 2)
+        choice_frame.geometry(f"{width}x{height}+{x}+{y}")
+        
+        tk.Label(choice_frame, text="请选择要添加的类型:", font=("楷体", 14)).pack(pady=10)
+        
+        def select_directory():
+            directory = filedialog.askdirectory()
+            if directory:
+                path_var.set(directory)
+            choice_frame.destroy()
+        
+        def select_file():
+            file_path = filedialog.askopenfilename(filetypes=[("Word文件", "*.docx"), ("所有文件", "*.*")])
+            if file_path:
+                path_var.set(file_path)
+            choice_frame.destroy()
+        
+        button_frame = tk.Frame(choice_frame)
+        button_frame.pack(pady=20)
+        
+        ttk.Button(button_frame, text="选择目录", command=select_directory).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="选择文件", command=select_file).pack(side=tk.LEFT, padx=10)
     
     def choose_output_directory(self):
         directory = filedialog.askdirectory()
@@ -434,7 +507,11 @@ class CodeToWordApp:
         if filepath:
             self.gitignore_path_var.set(filepath)
             
-
+    def choose_root_directory(self):
+        """选择主根目录"""
+        directory = filedialog.askdirectory()
+        if directory:
+            self.root_dir_var.set(directory)
     
     def on_mode_selected(self, event=None):
         """当文件类型模式被选择时更新扩展名输入框"""
@@ -447,13 +524,17 @@ class CodeToWordApp:
         if mode == "其他模式":
             # 启用输入框
             self.extension_entry.config(state='normal')
+            # 清空输入框
+            self.extension_var.set("")
         else:
-            # 显示预设模式的扩展名
+            # 显示选定模式的扩展名
             extensions = self.config_manager.get_file_type_modes().get(mode, [])
             self.extension_var.set(','.join(extensions))
-            # 禁用输入框，除非是自定义模式
-            is_custom = mode not in ["前端模式", "后端模式", "混合模式"]
-            self.extension_entry.config(state='normal' if is_custom else 'readonly')
+            # 对于默认模式，禁用编辑；对于自定义模式，允许编辑
+            if mode == "默认模式":
+                self.extension_entry.config(state='readonly')
+            else:
+                self.extension_entry.config(state='normal')
     
     def save_custom_mode(self):
         """保存当前扩展名设置为自定义模式"""
@@ -472,12 +553,6 @@ class CodeToWordApp:
         save_callback = CustomModeDialog.show_dialog(self.root, self.config_manager, update_mode_selector)
         save_callback.extensions = extensions
     
-
-
-
-    
-
-
     def generate_document(self):
         # 收集所有项目路径
         paths = [var.get() for var in self.path_vars if var.get()]
@@ -505,7 +580,8 @@ class CodeToWordApp:
         app_name_font = self.app_name_font_var.get() or "微软雅黑"
         version_font = self.version_font_var.get() or "微软雅黑"
         
-        mode = self.mode_var.get()
+        # 获取主根目录
+        root_dir = self.root_dir_var.get()
         
         # 获取并验证每页行数
         try:
@@ -536,34 +612,14 @@ class CodeToWordApp:
                 progress_window.update_progress(current, filename)
             
             all_styled_lines, lines_by_ext = self.file_processor.process_files(
-                files_to_process, paths, progress_callback
+                files_to_process, paths, root_dir, progress_callback
             )
 
             file_count = len(files_to_process)
             progress_window.destroy()
 
-            # --- Stage 3: Decide which lines to print based on mode ---
-            lines_to_print = []
-            total_lines = len(all_styled_lines)
-            total_pages = total_lines / lines_per_page
-            
-            final_mode = mode
-            if mode == "标准模式":
-                if total_pages <= 60:
-                    messagebox.showwarning("模式切换", f"总代码约 {total_pages:.1f} 页，不足60页，无法按标准模式生成。\n将自动切换到默认模式。")
-                    final_mode = "默认模式"
-                else:
-                    lines_for_30_pages = int(30 * lines_per_page)
-                    first_30 = all_styled_lines[:lines_for_30_pages]
-                    last_30 = all_styled_lines[-lines_for_30_pages:]
-                    separator_text = f"... (中间部分代码省略) ..."
-                    
-                    lines_to_print.extend(first_30)
-                    lines_to_print.append((separator_text, 'separator'))
-                    lines_to_print.extend(last_30)
-            
-            if final_mode == "默认模式":
-                lines_to_print = all_styled_lines
+            # --- Stage 3: 使用所有代码行 ---
+            lines_to_print = all_styled_lines
 
             # --- Stage 4: Generate the document from the prepared line list ---
             doc = self.document_generator.create_document(
@@ -612,16 +668,43 @@ class CodeToWordApp:
                     if len(ignored_files) > 10:
                         ignored_details += f"  ...等共 {len(ignored_files)} 个文件\n"
 
-                success_message = f"文档已生成完成！\n共处理 {file_count} 个文件。"
-                if final_mode == "标准模式":
-                    success_message += "\n模式：标准模式 (前30页 + 后30页)"
-                else:
-                    success_message += f"\n模式：默认模式 (共 {total_pages:.1f} 页)"
+                actual_pages = len(lines_to_print) / lines_per_page
+                success_message = f"文档已生成完成！\n共处理 {file_count} 个文件。\n共 {actual_pages:.1f} 页"
                 
                 success_message += stats_details
                 success_message += ignored_details
 
-                messagebox.showinfo("成功", success_message)
+                # 创建日志文件
+                log_filename = f"{app_name}_{version}_导出记录.txt"
+                log_path = os.path.join(os.path.dirname(save_path), log_filename)
+                
+                with open(log_path, 'w', encoding='utf-8') as log_file:
+                    log_file.write(f"文档名称: {os.path.basename(save_path)}\n")
+                    log_file.write(f"生成时间: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    log_file.write("处理的路径:\n")
+                    
+                    # 获取根目录
+                    root_dir = self.root_dir_var.get()
+                    root_path = pathlib.Path(root_dir) if root_dir else None
+                    
+                    for path in paths:
+                        path_obj = pathlib.Path(path)
+                        if root_path and path_obj.is_relative_to(root_path):
+                            rel_path = path_obj.relative_to(root_path)
+                            log_file.write(f"  - {rel_path} (相对路径)\n")
+                        else:
+                            log_file.write(f"  - {path}\n")
+                    
+                    log_file.write(f"\n总文件数: {file_count}\n")
+                    log_file.write(f"总代码行数: {total_code_lines}\n")
+                    log_file.write(f"总页数: {actual_pages:.1f}\n")
+                    
+                    # 写入文件类型统计
+                    log_file.write("\n文件类型统计:\n")
+                    for ext, count in lines_by_ext.items():
+                        log_file.write(f"  - {ext}: {count} 行\n")
+
+                messagebox.showinfo("成功", success_message + f"\n\n已在同目录下创建导出记录文件: {log_filename}")
                 try:
                     os.startfile(save_path)
                 except Exception as e:

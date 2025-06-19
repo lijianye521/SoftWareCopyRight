@@ -1,5 +1,6 @@
 import tkinter as tk
-from tkinter import ttk, font, Toplevel, messagebox
+from tkinter import ttk, font, Toplevel, messagebox, filedialog
+import os
 
 class FontSelector:
     @staticmethod
@@ -117,4 +118,123 @@ class ProgressWindow:
         """销毁窗口"""
         if self.window:
             self.window.destroy()
-            self.window = None 
+            self.window = None
+
+class SimilarityAnalysisFrame(ttk.Frame):
+    def __init__(self, parent, analyzer):
+        super().__init__(parent, padding=20)
+        self.analyzer = analyzer
+        self.file_paths = []
+        
+        # 创建文件列表框架
+        self.create_file_list_frame()
+        
+        # 创建按钮框架
+        self.create_button_frame()
+        
+        # 创建结果框架
+        self.create_result_frame()
+    
+    def create_file_list_frame(self):
+        """创建文件列表框架"""
+        file_list_frame = ttk.LabelFrame(self, text="文件列表", padding=15)
+        file_list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        # 创建文件列表
+        self.file_listbox = tk.Listbox(file_list_frame, height=10, font=('微软雅黑', 12))
+        self.file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(file_list_frame, orient="vertical", command=self.file_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.file_listbox.config(yscrollcommand=scrollbar.set)
+    
+    def create_button_frame(self):
+        """创建按钮框架"""
+        button_frame = ttk.Frame(self)
+        button_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # 添加文件按钮
+        add_btn = ttk.Button(button_frame, text="添加文件", command=self.add_file)
+        add_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 删除选中文件按钮
+        remove_btn = ttk.Button(button_frame, text="删除选中", command=self.remove_selected_file)
+        remove_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 清空列表按钮
+        clear_btn = ttk.Button(button_frame, text="清空列表", command=self.clear_files)
+        clear_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 分析按钮
+        analyze_btn = ttk.Button(button_frame, text="开始分析", command=self.analyze_files, style='Generate.TButton')
+        analyze_btn.pack(side=tk.RIGHT, padx=5)
+    
+    def create_result_frame(self):
+        """创建结果框架"""
+        result_frame = ttk.LabelFrame(self, text="分析结果", padding=15)
+        result_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 创建结果文本框
+        self.result_text = tk.Text(result_frame, wrap=tk.WORD, font=('微软雅黑', 12), height=10)
+        self.result_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        self.result_text.config(state=tk.DISABLED)
+        
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.result_text.config(yscrollcommand=scrollbar.set)
+    
+    def add_file(self):
+        """添加文件"""
+        file_paths = filedialog.askopenfilenames(
+            title="选择Word文档",
+            filetypes=[("Word文档", "*.docx"), ("所有文件", "*.*")]
+        )
+        
+        if file_paths:
+            for path in file_paths:
+                if path not in self.file_paths:
+                    self.file_paths.append(path)
+                    self.file_listbox.insert(tk.END, os.path.basename(path))
+    
+    def remove_selected_file(self):
+        """删除选中的文件"""
+        selection = self.file_listbox.curselection()
+        if selection:
+            index = selection[0]
+            self.file_listbox.delete(index)
+            self.file_paths.pop(index)
+    
+    def clear_files(self):
+        """清空文件列表"""
+        self.file_listbox.delete(0, tk.END)
+        self.file_paths.clear()
+    
+    def analyze_files(self):
+        """分析文件相似度"""
+        if len(self.file_paths) < 2:
+            messagebox.showwarning("警告", "请至少添加两个文件进行比较")
+            return
+        
+        try:
+            # 显示进度窗口
+            progress_window = ProgressWindow(self, len(self.file_paths))
+            self.update_idletasks()
+            
+            # 获取相似度报告
+            report = self.analyzer.get_similarity_report(self.file_paths)
+            
+            # 关闭进度窗口
+            progress_window.destroy()
+            
+            # 显示结果
+            self.result_text.config(state=tk.NORMAL)
+            self.result_text.delete(1.0, tk.END)
+            self.result_text.insert(tk.END, report)
+            self.result_text.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"分析过程中发生错误: {str(e)}")
+            if 'progress_window' in locals():
+                progress_window.destroy() 

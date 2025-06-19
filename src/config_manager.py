@@ -6,11 +6,9 @@ class ConfigManager:
         self.config = configparser.ConfigParser()
         self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
         
-        # 预定义文件类型模式
+        # 预设文件类型模式
         self.file_type_modes = {
-            "前端模式": ["json", "js", "jsx", "ts", "tsx", "html", "css", "scss", "vue"],
-            "后端模式": ["java", "xml", "py", "php", "cs", "go", "rb"],
-            "混合模式": ["json", "js", "jsx", "ts", "tsx", "html", "css", "scss", "vue", "java", "xml", "py", "php"]
+            "默认模式": ["java", "js", "ts", "jsx", "tsx"]
         }
     
     def load_config(self):
@@ -22,8 +20,7 @@ class ConfigManager:
                 # 加载自定义模式
                 if 'CustomModes' in self.config:
                     for mode_name, extensions in self.config['CustomModes'].items():
-                        if mode_name not in self.file_type_modes:
-                            self.file_type_modes[mode_name] = extensions.split(',')
+                        self.file_type_modes[mode_name] = extensions.split(',')
         except Exception as e:
             print(f"加载配置文件失败: {e}")
     
@@ -34,9 +31,9 @@ class ConfigManager:
             if 'CustomModes' not in self.config:
                 self.config['CustomModes'] = {}
             
-            # 保存自定义模式
+            # 保存自定义模式 (排除默认模式)
             custom_modes = {k: ','.join(v) for k, v in self.file_type_modes.items() 
-                           if k not in ["前端模式", "后端模式", "混合模式"]}
+                           if k != "默认模式"}
             
             self.config['CustomModes'] = custom_modes
             
