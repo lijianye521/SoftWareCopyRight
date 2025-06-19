@@ -52,8 +52,37 @@ python src/main.py
 
 ## 📦 打包发布
 
+本项目提供多种打包方式，可以根据需要选择：
+
+### 使用Nuitka打包（推荐，体积更小）
+
 ```bash
-python -m PyInstaller SoftwareCopyrightGenerator.spec
+# 使用批处理文件
+build_nuitka.bat
+
+# 或直接运行Python脚本
+python nuitka_build.py
+```
+
+#### 常见问题及解决方案
+
+- **资源嵌入失败** - 如果遇到 `Failed to add resources to file` 错误，通常是由于Windows Defender或其他杀毒软件的干扰。解决方法：
+  1. 使用管理员权限运行build_nuitka.bat
+  2. 临时关闭Windows Defender的实时保护
+  3. 将构建目录添加到杀毒软件的排除列表中
+
+- **构建时间长** - Nuitka构建过程比较耗时，特别是首次编译。这是正常现象，请耐心等待。
+
+- **依赖问题** - 如果出现缺少依赖的错误，可以尝试手动安装：`pip install 依赖包名称`
+
+### 使用cx_Freeze打包（轻量级选择）
+
+```bash
+# 使用批处理文件
+build_cx_freeze.bat
+
+# 或直接运行Python脚本
+python build_cx_freeze.py
 ```
 
 ## 🔧 高级配置
